@@ -2,12 +2,12 @@
 
 import os
 import numpy as np
+import pyproj
 import rasterio as rio
 import geopandas as gpd
 import json
 import fiona
 import glob
-import pyproj
 
 from itertools import product
 
@@ -86,7 +86,7 @@ def pix2world(rio_dataset, xy_pix):
     """Convert rasterio dataset pixel coordinates to world coordinates (WGS84).
     :param rio_dataset: rasterio dataset
     :param xy_pix: numpy array [x, y] pixel coordinates
-    :returns: lon and lat in world coordinates (WGS84)
+    :returns: lon and lat in Moon coordinates (Moon2000)
     
     Examples:
         with rio.open(raster) as rio_dataset:
@@ -96,16 +96,19 @@ def pix2world(rio_dataset, xy_pix):
     row, col = xy_pix
     
     # coordinate system rasterio dataset
-    crs_epsg = rio_dataset.crs.to_proj4()
-    utm_crs = pyproj.Proj(crs_epsg)
+    crs_proj4_raster = rio_dataset.crs.to_proj4()
+    crs_raster = pyproj.Proj(crs_proj4_raster)
     
     # get xy coordinates in the coordinate system of the rasterio dataset
-    utm_x, utm_y = rio_dataset.xy(row, col)
+    x, y = rio_dataset.xy(row, col)
         
     # World geodetic system 84 (WGS84)
-    wgs_crs = pyproj.Proj(init='epsg:4326')
+    #wgs_crs = pyproj.Proj(init='epsg:4326')
+
+    # Moon2000
+    Moon2000_crs = pyproj.Proj('+proj=longlat +a=1737400 +b=1737400 +no_defs')
     
-    lon,lat = pyproj.transform(utm_crs, wgs_crs, utm_x, utm_y)
+    lon,lat = pyproj.transform(crs_raster, Moon2000_crs, x, y)
         
     return ((lon,lat))
 
@@ -114,7 +117,7 @@ def world2pix(rio_dataset, xy_world):
     """Convert from world coordinates to pixel coordinates (based on coordinates
      of the rasterio dataset).
     :param rio_dataset:  rasterio dataset
-    :param xy_world: numpy array [x, y] world coordinates in WGS84
+    :param xy_world: numpy array [x, y] world coordinates in Moon2000
     :returns: numpy array [x, y] pixel coordinates
     
     Examples:
@@ -126,18 +129,70 @@ def world2pix(rio_dataset, xy_world):
     lon, lat = xy_world
     
     # World geodetic system 84 (WGS84)
-    wgs_crs = pyproj.Proj(init='epsg:4326')
+    #wgs_crs = pyproj.Proj(init='epsg:4326')
+
+    # Moon2000
+    Moon2000_crs = pyproj.Proj('+proj=longlat +a=1737400 +b=1737400 +no_defs')
     
     # coordinate system rasterio dataset
-    crs_epsg = rio_dataset.crs.to_proj4()
-    utm_crs = pyproj.Proj(crs_epsg)
+    crs_proj4_raster = rio_dataset.crs.to_proj4()
+    crs_raster = pyproj.Proj(crs_proj4_raster)
     
-    east,north = pyproj.transform(wgs_crs, utm_crs, lon, lat)
+    east,north = pyproj.transform(Moon2000_crs, crs_raster, lon, lat)
     
     # get row and cols with the help of rasterio
     row, col = rio_dataset.index(east, north)
     
     return ((row,col))
+
+def world2crs(rio_dataset, xy_world):
+    """Convert from world coordinates to rio_dataset coordinates
+    (based on coordinates of the rasterio dataset).
+    :param rio_dataset:  rasterio dataset
+    :param xy_world: numpy array [x, y] world coordinates in Moon2000
+    :returns: numpy array [x, y] pixel coordinates
+
+    Examples:
+        with rio.open(raster) as rio_dataset:
+            xy_pix = (11.05,61.22)
+            x, y = world2crs(rio_dataset, xy_world)
+    """
+
+    lon, lat = xy_world
+
+    # World geodetic system 84 (WGS84)
+    # wgs_crs = pyproj.Proj(init='epsg:4326')
+
+    # Moon2000
+    Moon2000_crs = pyproj.Proj('+proj=longlat +a=1737400 +b=1737400 +no_defs')
+
+    # coordinate system rasterio dataset
+    crs_proj4_raster = rio_dataset.crs.to_proj4()
+    crs_raster = pyproj.Proj(crs_proj4_raster)
+
+    east, north = pyproj.transform(Moon2000_crs, crs_raster, lon, lat)
+
+    return ((east, north))
+
+def bbox_world2crs(rio_dataset, bbox_xy_world):
+    """Convert bbox from world coordinates to bbox with pixel coordinates
+    (based on coordinates of the rasterio dataset).
+    :param rio_dataset:  rasterio dataset
+    :param bbox_xy_world: list [lon_min, lat_min, lon_max, lat_max] in world coordinates Moon2000
+    :returns: numpy array [x, y] pixel coordinates
+
+    Examples:
+        with rio.open(raster) as rio_dataset:
+            xy_pix = (11.05,61.22, 11.10, 61.32)
+            (lon_min, lat_min, lon_max, lat_max) = world2pix(rio_dataset, xy_world)
+    """
+    lon_min, lat_min, lon_max, lat_max = bbox_xy_world
+
+    x_min, y_min = world2crs(rio_dataset, [lon_min, lat_min])
+    x_max, y_max = world2crs(rio_dataset, [lon_max, lat_max])
+
+    return [x_min, y_min, x_max, y_max]
+
 
 def boundary(rio_dataset):
     """Get boundary of gdal tif.
@@ -207,14 +262,21 @@ def read(raster, bbox=None):
         
         # if pixel extent is provided, get raster data only for pixels
         if bbox:
-            
             # if a rio.Windows.Window is provided
             if type(bbox) == rio.windows.Window:
                 array = rio_dataset.read(window=bbox)
+
+            elif type(bbox) == tuple:
+                array = rio_dataset.read(window=rio.windows.Window(*bbox))
                 
             # if a list provided
+            elif type(bbox) == list:
+                extent = get_extent(rio_dataset, bbox)
+                array = rio_dataset.read(window=rio.windows.Window(*extent))
+
             else:
-                array = rio_dataset.read(window=rio.windows.Window(*bbox))
+                print ("type of format for bbox is not understood")
+
         else:
             array = rio_dataset.read()
       
