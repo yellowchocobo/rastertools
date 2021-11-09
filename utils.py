@@ -20,6 +20,46 @@ from affine import Affine
 from shapely.geometry import Polygon, box
 
 
+def get_raster_resolution(raster):
+    with rio.open(raster) as rio_dataset:
+        res = rio_dataset.res
+    return res
+
+def get_raster_types(raster):
+    with rio.open(raster) as rio_dataset:
+        dtypes = rio_dataset.dtypes
+    return dtypes
+
+def get_raster_height(raster):
+    with rio.open(raster) as rio_dataset:
+        height = rio_dataset.height
+    return height
+
+def get_raster_width(raster):
+    with rio.open(raster) as rio_dataset:
+        width = rio_dataset.width
+    return width
+
+def get_raster_bbox(raster):
+    with rio.open(raster) as rio_dataset:
+        bbox =rio_dataset.bounds
+    return list(bbox)
+
+def get_raster_shape(raster):
+    with rio.open(raster) as rio_dataset:
+        shape = rio_dataset.shape
+    return shape
+
+def get_raster_nbands(raster):
+    with rio.open(raster) as rio_dataset:
+        count = rio_dataset.count
+    return count
+
+def get_raster_profile(raster):
+    with rio.open(raster) as rio_dataset:
+        profile = rio_dataset.profile.copy()
+    return profile
+
 
 def crs_eqc(crs_wkt_src, lat):
         
@@ -246,86 +286,87 @@ def get_extent(rio_dataset, bbox):
               row_lr - row_ul)
     
     return extent
-    
 
-def read(raster, bbox=None):
-    """Read a raster. If bbox is specified, then only the specified bbox
-    within the raster is read. 
+def raster_extent_idxs(rio_dataset, bbox):
+    """get extent (column_upper_left, row_upper_left, ncols, nrows) from a
+     bounding box. The bounding box must have the same coordinate systems and
+     within the bounds of the rio_dataset raster.
 
-    :param raster: absolute path to raster
-    :param bbox: bounding box of an area within the raster
-    :returns: array: numpy array shaped as (rows, columns, bands)
+    This can be used as input in the rio.Windows.window function
+
+    Parameters
+    ----------
+    rio_dataset : rio dataset (e.g., raster)
+    bbox : list of int
+        bounding box of the raster [xmin, ymin, xmax, ymax]
+
+    Returns
+    ----------
+    extent (column_upper_left, row_upper_left, ncols, nrows)
     """
-    
-    # open raster
-    with rio.open(raster) as rio_dataset:
-        
-        # if pixel extent is provided, get raster data only for pixels
-        if bbox:
-            # if a rio.Windows.Window is provided
-            if type(bbox) == rio.windows.Window:
-                array = rio_dataset.read(window=bbox)
 
-            elif type(bbox) == tuple:
-                array = rio_dataset.read(window=rio.windows.Window(*bbox))
-                
-            # if a list provided
-            elif type(bbox) == list:
-                extent = get_extent(rio_dataset, bbox)
-                array = rio_dataset.read(window=rio.windows.Window(*extent))
+    row_ul, col_ul = rio_dataset.index(bbox[0], bbox[3])
+
+    row_lr, col_lr = rio_dataset.index(bbox[2], bbox[1])
+
+    extent = (col_ul,
+              row_ul,
+              col_lr - col_ul,
+              row_lr - row_ul)
+
+    return extent
+
+def read_raster(raster, bands=None, bbox=None, as_image=False):
+    """Read a raster. If bbox is specified, then only the specified bbox
+    within the raster is read.
+
+    Parameters
+    ----------
+    raster : path,
+        absolute path to raster.
+    bands : list of int or int. optional
+        band(s) to read (remember band count starts from 1)
+    bbox : list of int, optional
+        bounding box of an area within the raster [xmin, ymin, xmax, ymax]
+    as_image : boolean, optional
+    """
+
+    with rio.open(raster) as rio_dataset:
+        if bands:
+            if type(bands) == int:
+                bands = [bands]
+            else:
+                None
+        else:
+            bands = list(np.arange(rio_dataset.count) + 1)
+
+        if bbox:
+            # if bbox is provided as indexes
+            if type(bbox) == rio.windows.Window:
+                array = rio_dataset.read(bands, window=bbox)
 
             else:
-                print ("type of format for bbox is not understood")
-
+                # if a bbox with coordinates are specified, convert to idxs
+                idxs = raster_extent_idxs(rio_dataset, bbox)
+                array = rio_dataset.read(bands, window=rio.windows.Window(
+                    *idxs))
         else:
-            array = rio_dataset.read()
-      
+            # if none of the above, just read the whole array
+            array = rio_dataset.read(bands)
+
     # reshape to (rows, columns, bands) from (bands, rows, columns)
-    return reshape_as_image(array)
+    if as_image:
+        return reshape_as_image(array)
+    else:
+        return (array)
 
+def save_raster(fpath, arr, profile, is_image=True):
+    with rio.open(fpath, "w", **profile) as dst:
+        if is_image:
+            dst.write(reshape_as_raster(arr))
+        else:
+            dst.write(arr)
 
-def to_raster(array, template_raster, bbox, destination):
-    
-    # TODO: give meta as input (so more information can be passed to new raster)
-    # maybe just keep the saving of the data
-    
-    """Save a raster based on a template raster (template_raster). This function
-    is for example useful if a raster is clipped to a bounding box and a new 
-    raster wants to be created from it. 
-    
-    Only the bounding box of the raster can be here modified (quite limited).
-    Can not speficy the number of bands...
-    
-    :param array: numpy array
-    :param template_raster: absolute path to template_raster (used as template,
-    i.e., same coordinates systems, resolution ++). Only the origin is updated.
-    :param bbox: bounding box.
-    :param destination: absolute destination path for the raster
-    :returns: None: new raster is saved to absolute destination path
-    """
-    
-    # open the template raster and copy the metadata
-    with rio.open(template_raster) as rio_dataset:
-        meta = rio_dataset.profile        
-        
-    # let's update the metadata of the raster
-    meta['transform'] = Affine(meta['transform'][0], 
-                               meta['transform'][1], 
-                               bbox[0], 
-                               meta['transform'][3], 
-                               meta['transform'][4], 
-                               bbox[3])
-        
-    meta['width'] = np.shape(array)[1]
-    meta['height'] = np.shape(array)[0]
-            
-    # saving of the data
-    with rio.open(destination, 'w', **meta) as ds:
-        
-        # reshape to rasterio raster format
-        ds.write(reshape_as_raster(array))
-        
-        
 def clip_from_bbox(raster, bbox, clipped_raster = ""):
     
     """
@@ -445,11 +486,6 @@ def clip(raster, in_polygon, destination = None):
                             'specify a bounding box (as a tuple or a list with ' +
                             'xmin, ymin, xmax, ymax) or the absolute path to a ' +
                             'polygon shapefile (.shp)')
-                        
-
-        
-
-        
     return reshape_as_image(out_array)
 
 def clip_advanced(in_raster, in_polygon, cliptype, clipped_raster = ""):
@@ -542,57 +578,62 @@ def reproject(in_raster, dest_crs_wkt, reproj_raster):
                     resampling=Resampling.cubic)    
                 
 
-def resample(raster, resampling_factor, destination= ""):
-    
+def resample(raster_path, resolution):
     """
-    Resample input raster based on the resampling factor. Cubic interpolation
-    is used during the resamplibg step. 
-    
-    Example:
-        An upscaling by a factor of two results in resampling_factor = 2.0
-        A downscaling by a factor of two results in resampling_factor = 0.5
+    Resample input raster based on the specified new_resolution.
+    Cubic interpolation is used during the resampling step.
+    Parameters
+    ----------
+    raster_path : str
+        Path to raster
+    resolution : int
+        Resolution of target/output array
 
-    
-    :param raster: absolute path to the input raster to be resampled
-    :param resampling_factor: resampling factor (float)
-    :param resampled_raster: absolute path to resampled raster (to be saved, if wanted)
-    :returns: None: save resampled raster to resampled_raster
+    Returns
+    -------
+    resampled_array: array
+        Resampled array to chosen resolution
+
     """
-    
-    
-    with rio.open(raster) as rio_dataset:
-        array = rio_dataset.read(
-            out_shape=(rio_dataset.count, int(rio_dataset.height * resampling_factor), 
-                       int(rio_dataset.width * resampling_factor)),
-                       resampling=Resampling.cubic)
-        
-        if destination:
-            profile = rio_dataset.profile.copy()
-            
-            transform, width, height = rio.warp.calculate_default_transform(
-                            rio_dataset.crs, rio_dataset.crs, int(rio_dataset.width * resampling_factor), 
-                            int(rio_dataset.height * resampling_factor), *rio_dataset.bounds)
-            
-            profile.update({
-            'transform': transform,
-            'width': width,
-            'height': height})
-    
-            with rio.open(destination, 'w', **profile) as dst:
-                for i in range(1, rio_dataset.count + 1):
-                    rio.warp.reproject(
-                        source=rio.band(rio_dataset, i),
-                        destination=rio.band(dst, i),
-                        rio_dataset_transform=rio_dataset.transform,
-                        rio_dataset_crs=rio_dataset.crs,
-                        dst_transform=transform,
-                        dst_crs=rio_dataset.crs,
-                        resampling=Resampling.cubic)
-                
-        else:
-            None
-            
-    return reshape_as_image(array)
+    raster_path = Path(raster_path)
+
+    with rio.open(raster_path) as src:
+        array = src.read()
+        profile = src.profile.copy()
+        bounds = src.bounds # might have to calculate bounds based on 60 m?
+        original_resolution = profile["transform"][0]
+        resampling_factor = original_resolution / resolution
+
+        transform, width, height = rasterio.warp.calculate_default_transform(
+            profile["crs"],
+            profile["crs"],
+            int(profile["width"] * resampling_factor),
+            int(profile["height"] * resampling_factor),
+            *bounds
+        )
+
+        bands = array.shape[0]
+        resampled_array = np.zeros((bands, height, width),
+                                   dtype=profile['dtype'])
+
+        rasterio.warp.reproject(
+            source=array,
+            destination=resampled_array,
+            rio_dataset_transform=profile["transform"],
+            rio_dataset_crs=profile["crs"],
+            src_transform=profile["transform"],
+            dst_transform=transform,
+            src_crs=profile["crs"],
+            dst_crs=profile["crs"],
+            resampling=Resampling.cubic,
+        )
+
+        profile.update(
+            {"transform": transform, "width": width, "height": height}
+        )
+
+        return (resampled_array)
+
             
             
 def read_gtiff_bbox(dtype, raster, bbox, resampling_factor = 1.0, destination_clip = "", destination_resample= ""):
