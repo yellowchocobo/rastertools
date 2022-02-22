@@ -14,11 +14,16 @@ from itertools import product
 import rasterio.mask as mask
 from rasterio.plot import reshape_as_raster, reshape_as_image
 from rasterio.enums import Resampling
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 
 from affine import Affine
 
 from shapely.geometry import Polygon, box
 
+def get_raster_crs(raster):
+    with rio.open(raster) as rio_dataset:
+        crs = rio_dataset.crs
+    return crs
 
 def get_raster_resolution(raster):
     with rio.open(raster) as rio_dataset:
@@ -547,36 +552,29 @@ def clip_advanced(in_raster, in_polygon, cliptype, clipped_raster = ""):
     return reshape_as_image(out_image)
 
 
-def reproject(in_raster, dest_crs_wkt, reproj_raster):
-    
-    
+def reproject_raster(in_raster, dst_crs, filename):
+
     with rio.open(in_raster) as src:
-        
-        # get the new coordinate system
-        dest_crs = src.crs.from_wkt(dest_crs_wkt)
-        
-        transform, width, height = rio.warp.calculate_default_transform(
-            src.crs, dest_crs, src.width, src.height, *src.bounds)
-        
+        transform, width, height = calculate_default_transform(
+            src.crs, dst_crs, src.width, src.height, *src.bounds)
         kwargs = src.meta.copy()
         kwargs.update({
-            'crs': dest_crs,
+            'crs': dst_crs,
             'transform': transform,
             'width': width,
             'height': height
         })
-    
-        with rio.open(reproj_raster, 'w', **kwargs) as dst:
+
+        with rio.open(filename, 'w', **kwargs) as dst:
             for i in range(1, src.count + 1):
-                rio.warp.reproject(
+                reproject(
                     source=rio.band(src, i),
                     destination=rio.band(dst, i),
                     src_transform=src.transform,
                     src_crs=src.crs,
                     dst_transform=transform,
-                    dst_crs=dest_crs,
-                    resampling=Resampling.cubic)    
-                
+                    dst_crs=dst_crs,
+                    resampling=Resampling.cubic)
 
 def resample(raster_path, resolution):
     """
@@ -682,7 +680,8 @@ def read_gtiff_bbox(dtype, raster, bbox, resampling_factor = 1.0, destination_cl
         
     return array
 
-def tile_windows(rio_dataset, width = 512, height = 512):
+
+def tile_windows(raster, block_width = 512, block_height = 512):
     
     """
     Tile the rio_dataset raster (rasterio format) to a desired number of blocks
@@ -693,40 +692,34 @@ def tile_windows(rio_dataset, width = 512, height = 512):
     :param height: height of blocks (multiplier of 16 is advised, e.g., 512)
     :returns: tile_window, tile_transform: list of rasterio windows and transforms
     """
-    
-    # number of columns and rows
-    ncols, nrows = rio_dataset.meta['width'], rio_dataset.meta['height']
-    
-    offsets = product(range(0, ncols, width), range(0, nrows, height))
-    
-    big_window = rio.windows.Window(col_off=0, row_off=0, width=ncols, height=nrows)
-    
+
+    #
+
+    nwidth = get_raster_width(raster)
+    nheight = get_raster_height(raster)
+
+    offsets = product(range(0, nwidth, block_width),
+                      range(0, nheight, block_height))
+
     tile_window = []
     tile_transform = []
-    
-    for col_off, row_off in  offsets:
-        window =rio.windows.Window(col_off=col_off, row_off=row_off, width=width, height=height).intersection(big_window)
-        transform = rio_dataset.window_transform(window)
-        
-        tile_window.append(window)
-        tile_transform.append(transform)
-        
-    return tile_window, tile_transform
+    tile_bounds = []
 
-def tile_bounds(rio_dataset, tiles_window):
-    
-    """
-    Transform rasterio windows to bounding boxes (bbox).
-    
-    :param rio_dataset: rasterio raster dataset
-    :param tiles_window: list of rasterio windows
-    :returns: tbounds: list of bounding boxes
-    """
-    
-    tbounds = []
-    
-    for tile in tiles_window:
-                
-        tbounds.append(rio.windows.bounds(tile, rio_dataset.transform, tile.height, tile.width))
-                
-    return tbounds
+    with rio.open(raster) as src:
+        src_transform = src.transform
+
+        for col_off, row_off in offsets:
+            window =rio.windows.Window(col_off=col_off,
+                                       row_off=row_off,
+                                       width=block_width,
+                                       height=block_height)
+
+            win_transform = src.window_transform(window)
+            tile_window.append(window)
+            tile_transform.append(win_transform)
+
+            tile_bounds.append(rio.windows.bounds(window, src_transform,
+                                              window.height,
+                                              window.width))
+        
+    return tile_window, tile_transform, tile_bounds
