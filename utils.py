@@ -65,6 +65,10 @@ def get_raster_profile(raster):
         profile = rio_dataset.profile.copy()
     return profile
 
+def removekey(d, key):
+    r = dict(d)
+    del r[key]
+    return r
 
 def crs_eqc(crs_wkt_src, lat):
         
@@ -372,7 +376,7 @@ def save_raster(fpath, arr, profile, is_image=True):
         else:
             dst.write(arr)
 
-def clip_from_bbox(raster, bbox, clipped_raster = ""):
+def clip_from_bbox(raster, bbox, clipped_raster):
     
     """
     Clip a raster using the window functionality of rasterio and a specified
@@ -386,11 +390,15 @@ def clip_from_bbox(raster, bbox, clipped_raster = ""):
     :param clipped_raster: absolute path to where to save the clipped raster.
     if not defined, the clipped raster will not be saved.
     :returns: array: numpy array corresponding to the clipped area shaped as 
-    (rows, columns, bands)     
+    (rows, columns, bands)
+
+    Note: I should always make a copy of the in_meta to avoid changing the
+    meta of the original file
     """
     
     with rio.open(raster) as rio_dataset:
-        out_meta = rio_dataset.meta
+        in_meta = rio_dataset.meta
+        out_meta = in_meta.copy()
         
         # if we get a rio.windows.Windows directly
         if type(bbox) == rio.windows.Window:
@@ -413,26 +421,27 @@ def clip_from_bbox(raster, bbox, clipped_raster = ""):
             # get new transform
             win_transform = rio_dataset.window_transform(win)
         
-        # shape of array
-        dst_channel, dst_height, dst_width = np.shape(array)
-        
+    # shape of array
+    dst_channel, dst_height, dst_width = np.shape(array)
 
-        
-        # update meta information
-        if clipped_raster:          
-            out_meta.update({"driver": "GTiff",
-                     "height": dst_height,
-                     "width": dst_width,
-                     "transform": win_transform})
-            
-            with rio.open(clipped_raster, "w", **out_meta) as dst:
-                dst.write(array)
-                
-        else:
+    # update meta information
+    if in_meta['driver'] == 'VRT':
+        try:
+            out_meta = removekey(out_meta, "blockysize")
+            out_meta = removekey(out_meta, "blockxsize")
+        except:
             None
-            
-        return reshape_as_image(array)
-        
+        out_meta.update({"tiled": False})
+    else:
+        None
+
+    out_meta.update({"driver": "GTiff",
+             "height": dst_height,
+             "width": dst_width,
+             "transform": win_transform})
+
+    with rio.open(clipped_raster, "w", **out_meta) as dst:
+        dst.write(array)
         
 def clip(raster, in_polygon, destination = None):
     
