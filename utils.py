@@ -1,24 +1,47 @@
 """Utils and commonly used routines for working with GDAL/OGR data sets."""
 
 import os
+import math
 import numpy as np
 import pyproj
 import rasterio as rio
+import sys
 import geopandas as gpd
 import json
 import fiona
 import glob
 
+
+sys.path.append("/home/nilscp/GIT/rastertools")
+import crs
+
 from itertools import product
 
 import rasterio.mask as mask
+
+from affine import Affine
+from pathlib import Path
+from PIL import Image
+from rasterio import features
 from rasterio.plot import reshape_as_raster, reshape_as_image
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject, Resampling
-
-from affine import Affine
-
 from shapely.geometry import Polygon, box
+
+
+def tiff_to_png_batch(folder):
+    folder = Path(folder)
+    for raster in folder.glob('*.tif'):
+        tiff_to_png(raster)
+
+def tiff_to_png(raster):
+    raster = Path(raster)
+    png = raster.with_name(raster.name.split(".tif")[0] + ".png")
+    array = read_raster(raster, as_image=True)
+    h, w, c = array.shape
+    array = array.reshape((h,w))
+    im = Image.fromarray(array)
+    im.save(png)
 
 def get_raster_crs(raster):
     with rio.open(raster) as rio_dataset:
@@ -69,16 +92,6 @@ def removekey(d, key):
     r = dict(d)
     del r[key]
     return r
-
-def crs_eqc(crs_wkt_src, lat):
-        
-    # standard parallel should be replaced by the latitude
-    crs_wkt_dst = crs_wkt_src.replace('["standard_parallel_1",0]', '["standard_parallel_1",' + str(int(lat)) + ']')
-    
-    # central meridian should be replaced by the longitude
-    #crs_wkt = crs_wkt.replace('["central_meridian",0]', '["central_meridian",' + str(int(lon)) + ']')
-    
-    return crs_wkt_dst
 
 def parse_srid(rio_dataset):    
     """
@@ -257,22 +270,6 @@ def boundary(rio_dataset):
     
     return bbox
 
-
-def boundary_to_polygon(bbox):
-    
-    """convert bbox to shapely polygon
-    :param bbox: bounding box of a raster
-    :returns: shapely polygon of the same projection as the bbox
-    """
-    
-    [ulx, lry, lrx, uly] = bbox
-    
-    x_coords = [ulx, lrx, lrx, ulx, ulx] # will this be equivalent?
-    y_coords = [uly, uly, lry, lry, uly]
-    pol = Polygon(zip(x_coords, y_coords))
-    
-    return pol
-
 def get_extent(rio_dataset, bbox):
     
     """get extent (column_upper_left, row_upper_left, ncols, nrows) from a 
@@ -294,35 +291,6 @@ def get_extent(rio_dataset, bbox):
               col_lr - col_ul,
               row_lr - row_ul)
     
-    return extent
-
-def raster_extent_idxs(rio_dataset, bbox):
-    """get extent (column_upper_left, row_upper_left, ncols, nrows) from a
-     bounding box. The bounding box must have the same coordinate systems and
-     within the bounds of the rio_dataset raster.
-
-    This can be used as input in the rio.Windows.window function
-
-    Parameters
-    ----------
-    rio_dataset : rio dataset (e.g., raster)
-    bbox : list of int
-        bounding box of the raster [xmin, ymin, xmax, ymax]
-
-    Returns
-    ----------
-    extent (column_upper_left, row_upper_left, ncols, nrows)
-    """
-
-    row_ul, col_ul = rio_dataset.index(bbox[0], bbox[3])
-
-    row_lr, col_lr = rio_dataset.index(bbox[2], bbox[1])
-
-    extent = (col_ul,
-              row_ul,
-              col_lr - col_ul,
-              row_lr - row_ul)
-
     return extent
 
 def read_raster(raster, bands=None, bbox=None, as_image=False):
@@ -355,10 +323,19 @@ def read_raster(raster, bands=None, bbox=None, as_image=False):
                 array = rio_dataset.read(bands, window=bbox)
 
             else:
-                # if a bbox with coordinates are specified, convert to idxs
-                idxs = raster_extent_idxs(rio_dataset, bbox)
-                array = rio_dataset.read(bands, window=rio.windows.Window(
-                    *idxs))
+                # if a bbox with coordinates are specified, convert to pixel
+                win = rio.windows.from_bounds(*bbox, rio_dataset.transform)
+
+                # let's round to the closest pixel
+                new_col_off = np.int32(np.round(win.col_off))
+                new_row_off = np.int32(np.round(win.row_off))
+                new_width = np.int32(np.round(win.width))
+                new_height = np.int32(np.round(win.height))
+
+                new_win = rio.windows.Window(new_col_off, new_row_off,
+                                             new_width, new_height)
+
+                array = rio_dataset.read(bands, window=new_win)
         else:
             # if none of the above, just read the whole array
             array = rio_dataset.read(bands)
@@ -411,15 +388,24 @@ def clip_from_bbox(raster, bbox, clipped_raster):
             
         else:
             # get window (can be done with rio_dataset.index and indexes too)
-            extent = get_extent(rio_dataset, bbox)
-                
-            win = rio.windows.Window(*extent)
-            
+            #extent = get_extent(rio_dataset, bbox)
+            #win = rio.windows.Window(*extent)
+            win = rio.windows.from_bounds(*bbox, rio_dataset.transform)
+
+            # let's round to the closest pixel
+            new_col_off = np.int32(np.round(win.col_off))
+            new_row_off = np.int32(np.round(win.row_off))
+            new_width = np.int32(np.round(win.width))
+            new_height = np.int32(np.round(win.height))
+
+            new_win = rio.windows.Window(new_col_off, new_row_off,
+                                         new_width, new_height)
+
             # read array for window
-            array = rio_dataset.read(window=win)
+            array = rio_dataset.read(window=new_win)
             
             # get new transform
-            win_transform = rio_dataset.window_transform(win)
+            win_transform = rio_dataset.window_transform(new_win)
         
     # shape of array
     dst_channel, dst_height, dst_width = np.shape(array)
@@ -611,7 +597,7 @@ def resample(raster_path, resolution):
         original_resolution = profile["transform"][0]
         resampling_factor = original_resolution / resolution
 
-        transform, width, height = rasterio.warp.calculate_default_transform(
+        transform, width, height = rio.warp.calculate_default_transform(
             profile["crs"],
             profile["crs"],
             int(profile["width"] * resampling_factor),
@@ -623,7 +609,7 @@ def resample(raster_path, resolution):
         resampled_array = np.zeros((bands, height, width),
                                    dtype=profile['dtype'])
 
-        rasterio.warp.reproject(
+        rio.warp.reproject(
             source=array,
             destination=resampled_array,
             rio_dataset_transform=profile["transform"],
@@ -717,18 +703,160 @@ def tile_windows(raster, block_width = 512, block_height = 512):
     with rio.open(raster) as src:
         src_transform = src.transform
 
+        # added rounding to avoid varying height, width of tiles
+        # maybe redundant
         for col_off, row_off in offsets:
             window =rio.windows.Window(col_off=col_off,
                                        row_off=row_off,
                                        width=block_width,
                                        height=block_height)
 
-            win_transform = src.window_transform(window)
-            tile_window.append(window)
+            new_col_off = np.int32(np.round(window.col_off))
+            new_row_off = np.int32(np.round(window.row_off))
+            new_width = np.int32(np.round(window.width))
+            new_height = np.int32(np.round(window.height))
+
+            new_win = rio.windows.Window(new_col_off, new_row_off,
+                                         new_width, new_height)
+
+
+            win_transform = src.window_transform(new_win)
+            tile_window.append(new_win)
             tile_transform.append(win_transform)
 
-            tile_bounds.append(rio.windows.bounds(window, src_transform,
-                                              window.height,
-                                              window.width))
+            tile_bounds.append(rio.windows.bounds(new_win, src_transform,
+                                              new_win.height,
+                                              new_win.width))
         
     return tile_window, tile_transform, tile_bounds
+
+
+def footprint(in_raster, crs_out=None, out_shapefile=None):
+
+    """
+
+    :param raster:
+    :param crs_out:
+    :return:
+
+    :example:
+    nac_dtm_folder1 = Path("/media/nilscp/pampa/NAC_DTM/NAC_DTM_RDR")
+    nac_dtm_folder2 = Path("/media/nilscp/pampa/NAC_DTM/NAC_AMES")
+    nac_dtms = sorted(list(nac_dtm_folder1.glob("*.TIF"))) + sorted(list(nac_dtm_folder2.glob("*.TIF")))
+    crs_out = crs.Moon_Equidistant_Cylindrical()
+
+    geom = [footprint(raster, crs_out) for raster in nac_dtms]
+
+    dtm_path = []
+    name = []
+    for raster in nac_dtms:
+        name.append(raster.stem)
+        dtm_path.append(raster.as_posix())
+
+    gdf = gpd.GeoDataFrame(np.column_stack((name, dtm_path)), columns=[
+    "name", "path"], geometry=geom, crs=crs_out)
+
+    gdf.to_file("/home/nilscp/QGIS/Moon/NAC_DTM_footprints/NAC_DTM_footprints.shp")
+    """
+
+    in_raster = Path(in_raster)
+    crs_in = get_raster_crs(in_raster).to_wkt()
+    bbox = get_raster_bbox(in_raster)
+    bbox = box(*bbox)
+    gs = gpd.GeoSeries(bbox, crs=crs_in)
+
+    if crs_out:
+        gs_proj = gs.to_crs(crs_out)
+    else:
+        gs_proj = gs
+
+    if out_shapefile:
+        gs_proj.to_file(out_shapefile)
+
+    return (gs_proj.geometry.values[0])
+
+
+def footprints_intersect(in_raster1, in_raster2, out_shapefile=None):
+    """
+
+    :param in_raster1:
+    :param in_raster2:
+    :return:
+    """
+
+    in_raster1 = Path(in_raster1)
+    in_raster2 = Path(in_raster2)
+
+    crs_in1 = get_raster_crs(in_raster1).to_wkt()
+    crs_in2 = get_raster_crs(in_raster2).to_wkt()
+
+    gs1 = gpd.GeoSeries(footprint(in_raster1, crs_out=None, out_shapefile=None), crs=crs_in1)
+
+    if crs_in1 == crs_in2:
+        gs2 = gpd.GeoSeries(footprint(in_raster2, crs_out=None, out_shapefile=None), crs=crs_in2)
+    else:
+        print("different coord. sys.!, the 2nd raster is projected to coord. sys. of 1st raster")
+        gs2 = gpd.GeoSeries(footprint(in_raster2, crs_out=crs_in1, out_shapefile=None), crs=crs_in1)
+
+    gs_intersection = gs1.intersection(gs2)
+
+    if out_shapefile:
+        gs_intersection.to_file(out_shapefile)
+
+    return (gs_intersection.geometry.values[0])
+
+def pad(in_raster, padding_x, padding_y):
+
+    in_raster = Path(in_raster)
+    out_raster = in_raster.with_name(in_raster.stem + "_padded" + in_raster.suffix)
+    in_array = read_raster(in_raster, bands=None, bbox=None, as_image=True).squeeze()
+    in_meta = get_raster_profile(in_raster)
+    in_res = get_raster_resolution(in_raster)[0]
+    in_bbox = get_raster_bbox(in_raster)
+    padded_array = np.pad(in_array, (padding_x,padding_y), 'constant', constant_values=in_meta["nodata"])
+    padded_array = np.expand_dims(padded_array,axis=2)
+    out_meta = in_meta.copy()
+
+    out_bbox = [in_bbox[0] - (in_res * padding_x[0]),
+                in_bbox[1] - (in_res * padding_y[0]),
+                in_bbox[2] + (in_res * padding_x[1]),
+                in_bbox[3] + (in_res * padding_y[1])]
+
+    out_meta["width"] = padded_array.shape[1]
+    out_meta["height"] = padded_array.shape[0]
+    out_meta["transform"] = Affine(in_res,0.0,out_bbox[0],0.0,-in_res,out_bbox[3])
+
+    save_raster(out_raster, padded_array, out_meta, is_image=True)
+
+def polygonize(rio_dataset, values, mask, out_shapefile=False):
+    """
+
+    :param rio_dataset:
+    :param values:
+    :param mask:
+    :param out_shapefile:
+    :return:
+
+    :example:
+
+    array = read_raster(raster, as_image=True).squeeze()
+    mask = array > 200 # brightest region in the picture
+    values = (mask + 0.0).astype('uint8')
+    with rio.open(raster) as rio_dataset:
+        meta = rio_dataset.profile
+        polygonize(rio_dataset, values, mask, out_shapefile="/home/nilscp/tmp/shp/test.shp")
+    """
+    geoms = []
+    meta = rio_dataset.profile
+    results = ({'properties': {'raster_val': v}, 'geometry': s}
+               for j, (s, v) in enumerate(
+        features.shapes(values, mask=mask, transform=meta["transform"])))
+    geoms.append(list(results))
+
+    gdf = gpd.GeoDataFrame.from_features(geoms[0], crs=meta["crs"])
+    if out_shapefile:
+        gdf.to_file(out_shapefile)
+
+    return gdf
+
+
