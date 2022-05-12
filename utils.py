@@ -26,8 +26,9 @@ from rasterio import features
 from rasterio.plot import reshape_as_raster, reshape_as_image
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject, Resampling
+from scipy.ndimage import fourier_shift
 from shapely.geometry import Polygon, box
-
+from shapely.affinity import translate
 
 def tiff_to_png_batch(folder):
     folder = Path(folder)
@@ -428,59 +429,59 @@ def clip_from_bbox(raster, bbox, clipped_raster):
 
     with rio.open(clipped_raster, "w", **out_meta) as dst:
         dst.write(array)
-        
-def clip(raster, in_polygon, destination = None):
-    
+
+
+def clip(in_raster, in_polygon, out_raster=False):
     """
     Clip a raster using either a:
         i) polygon shape file (.shp)) - cliptype = 'shp'
         ii) bounding box ([left,bottom,right,top])  - cliptype = 'bbox'
         iii) geojson polygon - cliptype = 'geojson'
-    
-    The advanced clip function takes an input polygon under various formats 
-    (see above) and generate a clipped raster from it. It returns a numpy array 
+
+    The advanced clip function takes an input polygon under various formats
+    (see above) and generate a clipped raster from it. It returns a numpy array
     containing the clipped data as (rows, columns, bands) and save the clipped
     raster if wanted.
-    
+
     :param raster: absolute path to the input raster (to be clipped)
     :param in_polygon: input polygon (format depends on cliptype)
     :param cliptype: type of input polygon ('shp', 'bbox' or 'geojson')
     :param clipped_raster: absolute path to saved clipped raster* (*if wanted)
-    :returns: array: numpy array corresponding to the clipped area shaped as 
-    (rows, columns, bands)       
+    :returns: array: numpy array corresponding to the clipped area shaped as
+    (rows, columns, bands)
     """
-    
-    with rio.open(raster) as rio_dataset:
+
+    with rio.open(in_raster) as rio_dataset:
         out_meta = rio_dataset.meta
-    
-    
+
         # get clip shape from polygon shape
         if type(in_polygon) == str:
-            
+
             with fiona.open(in_polygon, "r") as polygon:
                 shapes = [feature["geometry"] for feature in polygon]
-                
+
                 # clipping of raster
-                out_array, out_transform = mask.mask(rio_dataset, shapes, crop=True)
-                
-                # if destination is specified, we save the data to a tif 
-                if destination:          
+                out_array, out_transform = mask.mask(rio_dataset, shapes,
+                                                     crop=True)
+
+                # if out_raster is specified, we save the data to a tif
+                if out_raster:
                     out_meta.update({"driver": "GTiff",
-                             "height": out_array.shape[1],
-                             "width": out_array.shape[2],
-                             "transform": out_transform})
-                    
-                    with rio.open(destination, "w", **out_meta) as dst:
+                                     "height": out_array.shape[1],
+                                     "width": out_array.shape[2],
+                                     "transform": out_transform})
+
+                    with rio.open(out_raster, "w", **out_meta) as dst:
                         dst.write(out_array)
-                        
+
                 else:
                     None
-                
-        # if bounding box with coordinates (list or tuple)  
+
+        # if bounding box with coordinates (list or tuple)
         elif (type(in_polygon) == tuple or type(in_polygon) == list):
-            
-            out_array = clip_from_bbox(raster, in_polygon, destination)
-                            
+
+            out_array = clip_from_bbox(in_raster, in_polygon, out_raster)
+
         else:
             raise Exception('Input polygon format is not recognized. Please ' +
                             'specify a bounding box (as a tuple or a list with ' +
@@ -730,8 +731,33 @@ def tile_windows(raster, block_width = 512, block_height = 512):
         
     return tile_window, tile_transform, tile_bounds
 
+def true_footprint(in_raster, out_shapefile=False):
 
-def footprint(in_raster, crs_out=None, out_shapefile=None):
+    """
+    footprint excluding nan values
+
+    :param in_raster:
+    :param out_shapefile:
+    :return:
+
+    :todo: allow for convertion to new crs?
+    """
+
+    in_raster = Path(in_raster)
+    array = read_raster(in_raster, as_image=True).squeeze()
+    mask = array != 0
+    values = mask + 0
+    values = values.astype('uint8')
+
+    with rio.open(in_raster) as rio_dataset:
+        if out_shapefile:
+            gdf_true_footprint = polygonize(rio_dataset, values, mask, out_shapefile=out_shapefile)
+        else:
+            gdf_true_footprint = polygonize(rio_dataset, values, mask, out_shapefile=False)
+
+    return (gdf_true_footprint)
+
+def footprint(in_raster, crs_out=False, out_shapefile=False):
 
     """
 
@@ -775,37 +801,7 @@ def footprint(in_raster, crs_out=None, out_shapefile=None):
 
     return (gs_proj.geometry.values[0])
 
-
-def footprints_intersect(in_raster1, in_raster2, out_shapefile=None):
-    """
-
-    :param in_raster1:
-    :param in_raster2:
-    :return:
-    """
-
-    in_raster1 = Path(in_raster1)
-    in_raster2 = Path(in_raster2)
-
-    crs_in1 = get_raster_crs(in_raster1).to_wkt()
-    crs_in2 = get_raster_crs(in_raster2).to_wkt()
-
-    gs1 = gpd.GeoSeries(footprint(in_raster1, crs_out=None, out_shapefile=None), crs=crs_in1)
-
-    if crs_in1 == crs_in2:
-        gs2 = gpd.GeoSeries(footprint(in_raster2, crs_out=None, out_shapefile=None), crs=crs_in2)
-    else:
-        print("different coord. sys.!, the 2nd raster is projected to coord. sys. of 1st raster")
-        gs2 = gpd.GeoSeries(footprint(in_raster2, crs_out=crs_in1, out_shapefile=None), crs=crs_in1)
-
-    gs_intersection = gs1.intersection(gs2)
-
-    if out_shapefile:
-        gs_intersection.to_file(out_shapefile)
-
-    return (gs_intersection.geometry.values[0])
-
-def pad(in_raster, padding_x, padding_y):
+def pad(in_raster, padding_height, padding_width):
 
     in_raster = Path(in_raster)
     out_raster = in_raster.with_name(in_raster.stem + "_padded" + in_raster.suffix)
@@ -813,14 +809,14 @@ def pad(in_raster, padding_x, padding_y):
     in_meta = get_raster_profile(in_raster)
     in_res = get_raster_resolution(in_raster)[0]
     in_bbox = get_raster_bbox(in_raster)
-    padded_array = np.pad(in_array, (padding_x,padding_y), 'constant', constant_values=in_meta["nodata"])
-    padded_array = np.expand_dims(padded_array,axis=2)
+    padded_array = np.pad(in_array, (padding_height,padding_width), 'constant', constant_values=in_meta["nodata"])
+    padded_array = np.expand_dims(padded_array, axis=2)
     out_meta = in_meta.copy()
 
-    out_bbox = [in_bbox[0] - (in_res * padding_x[0]),
-                in_bbox[1] - (in_res * padding_y[0]),
-                in_bbox[2] + (in_res * padding_x[1]),
-                in_bbox[3] + (in_res * padding_y[1])]
+    out_bbox = [in_bbox[0] - (in_res * padding_width[0]),
+                in_bbox[1] - (in_res * padding_height[0]),
+                in_bbox[2] + (in_res * padding_width[1]),
+                in_bbox[3] + (in_res * padding_height[1])]
 
     out_meta["width"] = padded_array.shape[1]
     out_meta["height"] = padded_array.shape[0]
@@ -860,3 +856,76 @@ def polygonize(rio_dataset, values, mask, out_shapefile=False):
     return gdf
 
 
+def shift_with_padding(in_raster, x_shift, y_shift, out_raster):
+
+    """
+
+    :param in_raster:
+    :param x_shift: (in m)
+    :param y_shift: (in m)
+    :return:
+    """
+    in_raster = Path(in_raster)
+    in_res = get_raster_resolution(in_raster)[0]
+
+    width_shift_px = x_shift / in_res
+    height_shift_px = y_shift / in_res
+    padding_width = np.abs(np.ceil(x_shift).astype('int') * 2) # padding is in m
+    padding_height = np.abs(np.ceil(y_shift).astype('int') * 2) # padding is in m
+
+    # let's pad the original raster so that we do not loose any pixels in the shifting
+    in_raster_padded = in_raster.with_name(in_raster.stem + "_padded" + in_raster.suffix)
+    pad(in_raster, (padding_height,padding_height), (padding_width,padding_width))
+    out_meta = get_raster_profile(in_raster_padded)
+
+    # pad raster based on shift
+    shift_in_image = (-height_shift_px, width_shift_px) # in pixel resolution
+    # note the minus in front of the height_shift_px in the image
+    # this is because positive is downwards in array, origin is at the upper left
+
+    # read array
+    array = read_raster(in_raster_padded,as_image=True).squeeze()
+
+    offset_corrected_image = fourier_shift(np.fft.fftn(array), shift_in_image)
+    offset_corrected_image = np.fft.ifftn(offset_corrected_image)
+    offset_corrected_image_uint8 = np.round(offset_corrected_image.real, decimals=0).astype('uint8')
+    offset_corrected_image_uint8 = np.expand_dims(offset_corrected_image_uint8, axis=2)
+
+    # save raster
+    save_raster(out_raster, offset_corrected_image_uint8, out_meta, is_image=True)
+
+    # crop the boundary of the raster by shifting the bbox and cropping the previous raster
+
+
+def shift(in_raster, x_shift, y_shift, out_raster):
+
+    """
+
+    :param in_raster:
+    :param x_shift: (in m)
+    :param y_shift: (in m)
+    :return:
+    """
+    in_raster = Path(in_raster)
+    in_res = get_raster_resolution(in_raster)[0]
+
+    width_shift_px = x_shift / in_res
+    height_shift_px = y_shift / in_res
+
+    out_meta = get_raster_profile(in_raster)
+
+    # pad raster based on shift
+    shift_in_image = (-height_shift_px, width_shift_px) # in pixel resolution
+    # note the minus in front of the height_shift_px in the image
+    # this is because positive is downwards in array, origin is at the upper left
+
+    # read array
+    array = read_raster(in_raster,as_image=True).squeeze()
+
+    offset_corrected_image = fourier_shift(np.fft.fftn(array), shift_in_image)
+    offset_corrected_image = np.fft.ifftn(offset_corrected_image)
+    offset_corrected_image_uint8 = np.round(offset_corrected_image.real, decimals=0).astype('uint8')
+    offset_corrected_image_uint8 = np.expand_dims(offset_corrected_image_uint8, axis=2)
+
+    # save raster
+    save_raster(out_raster, offset_corrected_image_uint8, out_meta, is_image=True)
