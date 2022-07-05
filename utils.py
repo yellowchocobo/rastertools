@@ -3,6 +3,7 @@
 import os
 import math
 import numpy as np
+import pathlib
 import pyproj
 import rasterio as rio
 import sys
@@ -455,14 +456,14 @@ def clip(in_raster, in_polygon, out_raster=False):
         out_meta = rio_dataset.meta
 
         # get clip shape from polygon shape
-        if type(in_polygon) == str:
+        if (type(in_polygon) == str) or (type(in_polygon) == pathlib.PosixPath):
 
             with fiona.open(in_polygon, "r") as polygon:
                 shapes = [feature["geometry"] for feature in polygon]
 
                 # clipping of raster
                 out_array, out_transform = mask.mask(rio_dataset, shapes,
-                                                     crop=True)
+                                                     all_touched=False, crop=True)
 
                 # if out_raster is specified, we save the data to a tif
                 if out_raster:
