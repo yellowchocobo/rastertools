@@ -31,62 +31,69 @@ from scipy.ndimage import fourier_shift
 from shapely.geometry import Polygon, box
 from shapely.affinity import translate
 
-def tiff_to_png_batch(folder):
+def rgb_fake_batch(folder):
     folder = Path(folder)
-    for raster in folder.glob('*.tif'):
-        tiff_to_png(raster)
+    for in_raster in folder.glob('*.png'):
+        fake_RGB(in_raster)
 
-def tiff_to_png(raster):
-    raster = Path(raster)
-    png = raster.with_name(raster.name.split(".tif")[0] + ".png")
-    array = read_raster(raster, as_image=True)
+def tiff_to_png_batch(folder, is_hirise=False):
+    folder = Path(folder)
+    for in_raster in folder.glob('*.tif'):
+        tiff_to_png(in_raster, is_hirise)
+
+def tiff_to_png(in_raster, is_hirise=False):
+    in_raster = Path(in_raster)
+    png = in_raster.with_name(in_raster.name.split(".tif")[0] + ".png")
+    array = read_raster(in_raster, as_image=True)
     h, w, c = array.shape
     array = array.reshape((h,w))
+    if is_hirise:
+        array = np.round(array * (255.0 / 1023.0)).astype('uint8')
     im = Image.fromarray(array)
     im.save(png)
 
-def get_raster_crs(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_crs(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         crs = rio_dataset.crs
     return crs
 
-def get_raster_resolution(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_resolution(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         res = rio_dataset.res
     return res
 
-def get_raster_types(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_types(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         dtypes = rio_dataset.dtypes
     return dtypes
 
-def get_raster_height(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_height(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         height = rio_dataset.height
     return height
 
-def get_raster_width(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_width(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         width = rio_dataset.width
     return width
 
-def get_raster_bbox(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_bbox(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         bbox =rio_dataset.bounds
     return list(bbox)
 
-def get_raster_shape(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_shape(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         shape = rio_dataset.shape
     return shape
 
-def get_raster_nbands(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_nbands(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         count = rio_dataset.count
     return count
 
-def get_raster_profile(raster):
-    with rio.open(raster) as rio_dataset:
+def get_raster_profile(in_raster):
+    with rio.open(in_raster) as rio_dataset:
         profile = rio_dataset.profile.copy()
     return profile
 
@@ -295,7 +302,7 @@ def get_extent(rio_dataset, bbox):
     
     return extent
 
-def read_raster(raster, bands=None, bbox=None, as_image=False):
+def read_raster(in_raster, bands=None, bbox=None, as_image=False):
     """Read a raster. If bbox is specified, then only the specified bbox
     within the raster is read.
 
@@ -310,7 +317,7 @@ def read_raster(raster, bands=None, bbox=None, as_image=False):
     as_image : boolean, optional
     """
 
-    with rio.open(raster) as rio_dataset:
+    with rio.open(in_raster) as rio_dataset:
         if bands:
             if type(bands) == int:
                 bands = [bands]
@@ -355,7 +362,23 @@ def save_raster(fpath, arr, profile, is_image=True):
         else:
             dst.write(arr)
 
-def clip_from_bbox(raster, bbox, clipped_raster):
+def fake_RGB(in_raster, out_raster=None):
+
+    """
+    For some reasons the fake RGB can not be plotted in QGIS (maybe need RGBA!)
+    :param in_raster:
+    :param out_raster:
+    :return:
+    """
+    in_raster = Path(in_raster)
+    array = Image.open(in_raster).convert("RGB")
+    if out_raster:
+        None
+    else:
+        out_raster = in_raster.with_name(in_raster.stem + "_fakergb" + in_raster.suffix)
+    array.save(out_raster)
+
+def clip_from_bbox(in_raster, bbox, clipped_raster):
     
     """
     Clip a raster using the window functionality of rasterio and a specified
@@ -375,7 +398,7 @@ def clip_from_bbox(raster, bbox, clipped_raster):
     meta of the original file
     """
     
-    with rio.open(raster) as rio_dataset:
+    with rio.open(in_raster) as rio_dataset:
         in_meta = rio_dataset.meta
         out_meta = in_meta.copy()
         
@@ -631,7 +654,7 @@ def resample(raster_path, resolution):
 
             
             
-def read_gtiff_bbox(dtype, raster, bbox, resampling_factor = 1.0, destination_clip = "", destination_resample= ""):
+def read_gtiff_bbox(dtype, in_raster, bbox, resampling_factor = 1.0, destination_clip = "", destination_resample= ""):
     
     """Read a given bounding box, in the source reference system, from
     a GeoTiff. The bounding box must be within the bounds of the data set. A 
@@ -661,7 +684,7 @@ def read_gtiff_bbox(dtype, raster, bbox, resampling_factor = 1.0, destination_cl
         resampled_raster_name = './tmp_resampled_raster.tif'
     
     # clip array
-    clipped_array = clip_from_bbox(raster, bbox, clipped_raster_name)
+    clipped_array = clip_from_bbox(in_raster, bbox, clipped_raster_name)
     
     # resampling of clip array
     if resampling_factor == 1.0:
@@ -678,7 +701,7 @@ def read_gtiff_bbox(dtype, raster, bbox, resampling_factor = 1.0, destination_cl
     return array
 
 
-def tile_windows(raster, block_width = 512, block_height = 512):
+def tile_windows(in_raster, block_width = 512, block_height = 512):
     
     """
     Tile the rio_dataset raster (rasterio format) to a desired number of blocks
@@ -692,8 +715,8 @@ def tile_windows(raster, block_width = 512, block_height = 512):
 
     #
 
-    nwidth = get_raster_width(raster)
-    nheight = get_raster_height(raster)
+    nwidth = get_raster_width(in_raster)
+    nheight = get_raster_height(in_raster)
 
     offsets = product(range(0, nwidth, block_width),
                       range(0, nheight, block_height))
@@ -702,7 +725,7 @@ def tile_windows(raster, block_width = 512, block_height = 512):
     tile_transform = []
     tile_bounds = []
 
-    with rio.open(raster) as src:
+    with rio.open(in_raster) as src:
         src_transform = src.transform
 
         # added rounding to avoid varying height, width of tiles
