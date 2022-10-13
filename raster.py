@@ -31,6 +31,63 @@ from scipy.ndimage import fourier_shift
 from shapely.geometry import Polygon, box
 from shapely.affinity import translate
 
+
+def normalize_uint8(in_raster, out_raster):
+    """
+    Min-Max Normalization and conversion to byte
+    equivalent to
+    gdal_translate -ot Byte -scale -a_nodata 0 src_dataset dst_dataset
+    but it is better to drop the no_data equal to 0.
+    :param in_raster:
+    :param out_raster:
+    :return:
+    """
+    array = read_raster(in_raster)
+    out_meta = get_raster_profile(in_raster)
+
+    # for RED_MRDR (I don't really like those min-max stretching...)
+    # a very dark image could end up having a weird stretching
+    # highest value encountered 0.155219, lowest value 0.0
+    if array.dtype == np.float32: # nan = -3.4028226550889045e+38
+        array[array < 0] = 0.0
+    array_norm = (array - array.min()) / (array.max() - array.min())
+    array_uint8 = np.round(array_norm * 255, decimals=0).astype('uint8')
+
+
+    out_meta.update({
+             "count": 1,
+             "dtype": "uint8",
+             "nodata": 0})
+
+    save_raster(out_raster, array_uint8, out_meta, False)
+
+
+def rgb_to_grayscale(in_raster, out_raster):
+
+    """
+    Takes RGB or RGBA raster and convert it to grayscale.
+
+    :param in_raster:
+    :param out_raster:
+    :return:
+    """
+
+    in_raster = Path(in_raster)
+    array = Image.open(in_raster).convert("L")
+    array = np.array(array)
+    array = np.expand_dims(array, axis=0)
+
+    if out_raster:
+        None
+    else:
+        out_raster = in_raster.with_name(in_raster.stem + "_grayscale" + in_raster.suffix)
+
+    out_meta = get_raster_profile(in_raster)
+    out_meta.update({"count": 1})
+
+    with rio.open(out_raster, "w", **out_meta) as dst:
+        dst.write(array)
+
 def rgb_fake_batch(folder):
     folder = Path(folder)
     for in_raster in folder.glob('*.png'):
@@ -41,7 +98,7 @@ def tiff_to_png_batch(folder, is_hirise=False):
     for in_raster in folder.glob('*.tif'):
         tiff_to_png(in_raster, is_hirise)
 
-def tiff_to_png(in_raster, is_hirise=False):
+def tiff_to_png(in_raster, out_png=False, is_hirise=False):
     in_raster = Path(in_raster)
     png = in_raster.with_name(in_raster.name.split(".tif")[0] + ".png")
     array = read_raster(in_raster, as_image=True)
@@ -50,6 +107,11 @@ def tiff_to_png(in_raster, is_hirise=False):
     if is_hirise:
         array = np.round(array * (255.0 / 1023.0)).astype('uint8')
     im = Image.fromarray(array)
+
+    if out_png:
+        None
+    else:
+        out_png = in_raster.with_name(in_raster.stem + "_fakergb" + in_raster.suffix)
     im.save(png)
 
 def get_raster_crs(in_raster):
@@ -700,8 +762,7 @@ def read_gtiff_bbox(dtype, in_raster, bbox, resampling_factor = 1.0, destination
         
     return array
 
-
-def tile_windows(in_raster, block_width = 512, block_height = 512):
+def tile_windows(in_raster, block_width = 512, block_height = 512, stride=False, add_together=False):
     
     """
     Tile the rio_dataset raster (rasterio format) to a desired number of blocks
@@ -713,13 +774,31 @@ def tile_windows(in_raster, block_width = 512, block_height = 512):
     :returns: tile_window, tile_transform: list of rasterio windows and transforms
     """
 
-    #
-
     nwidth = get_raster_width(in_raster)
     nheight = get_raster_height(in_raster)
 
     offsets = product(range(0, nwidth, block_width),
                       range(0, nheight, block_height))
+
+    # I want to allow for three different scenarios
+    # (1) tiling with no stride (only)
+    # (2) tiling with stride (only)
+    # (3) (1) and (2) together
+
+    if stride:
+        offsets_stride = product(range(stride, nwidth, block_width),
+                          range(stride, nheight, block_height))
+    else:
+        None
+
+    if stride & add_together:
+        offsets = list(offsets) + list(offsets_stride)
+
+    elif stride & ~add_together:
+        offsets = offsets_stride
+
+    else:
+        None
 
     tile_window = []
     tile_transform = []
