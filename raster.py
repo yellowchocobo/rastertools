@@ -762,7 +762,7 @@ def read_gtiff_bbox(dtype, in_raster, bbox, resampling_factor = 1.0, destination
         
     return array
 
-def tile_windows(in_raster, block_width = 512, block_height = 512, stride=False, add_together=False):
+def tile_windows(in_raster, block_width = 512, block_height = 512, stride=(0,0)):
     
     """
     Tile the rio_dataset raster (rasterio format) to a desired number of blocks
@@ -776,29 +776,11 @@ def tile_windows(in_raster, block_width = 512, block_height = 512, stride=False,
 
     nwidth = get_raster_width(in_raster)
     nheight = get_raster_height(in_raster)
+    stride_x = stride[0]
+    stride_y = stride[1]
 
-    offsets = product(range(0, nwidth, block_width),
-                      range(0, nheight, block_height))
-
-    # I want to allow for three different scenarios
-    # (1) tiling with no stride (only)
-    # (2) tiling with stride (only)
-    # (3) (1) and (2) together
-
-    if stride:
-        offsets_stride = product(range(stride, nwidth, block_width),
-                          range(stride, nheight, block_height))
-    else:
-        None
-
-    if stride & add_together:
-        offsets = list(offsets) + list(offsets_stride)
-
-    elif stride & ~add_together:
-        offsets = offsets_stride
-
-    else:
-        None
+    offsets = product(range(stride_x, nwidth, block_width),
+                      range(stride_y, nheight, block_height))
 
     tile_window = []
     tile_transform = []
