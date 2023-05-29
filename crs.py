@@ -156,6 +156,7 @@ def Moon_North_Pole_Stereographic():
             'PARAMETER["Scale_Factor",1],'
             'PARAMETER["Latitude_Of_Origin",90],'
             'UNIT["Meter",1]]')
+    return (proj)
 
 def Moon_South_Pole_Stereographic():
     proj = ('PROJCS["Moon_South_Pole_Stereographic",'
@@ -171,6 +172,7 @@ def Moon_South_Pole_Stereographic():
             'PARAMETER["Scale_Factor",1],'
             'PARAMETER["Latitude_Of_Origin",-90],'
             'UNIT["Meter",1]]')
+    return (proj)
 
 def mollweide_proj(a, b):
     default_mol = ('+proj=moll +lon_0=0 +x_0=0 +y_0=0 +a=1737400 +b=1737400'
