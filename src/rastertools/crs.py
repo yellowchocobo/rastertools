@@ -1,19 +1,37 @@
 import numpy as np
 
-def Mars_2000():
+def Mars_2000(lonlat_range=180):
     coord_sys = ('GEOGCS["Mars 2000",'
                  'DATUM["D_Mars_2000",'
                  'SPHEROID["Mars_2000_IAU_IAG",3396190.0,169.89444722361179]],'
                  'PRIMEM["Greenwich",0],'
-                 'UNIT["Decimal_Degree",0.0174532925199433]]')
+                 'UNIT["Decimal_Degree",0.0174532925199433]],')
+    if lonlat_range == 180:
+        coord_sys = coord_sys + 'USAGE[SCOPE["unknown"],AREA["World"],BBOX[-90,-180,90,180]]'
+    elif lonlat_range == 360:
+        coord_sys = coord_sys + 'USAGE[SCOPE["unknown"],AREA["World"],BBOX[-90,0,90,360]]'
     return(coord_sys)
 
-def Moon_2000():
-    coord_sys = ('GEOGCS["Moon 2000",'
+def Moon_2000(lonlat_range=180):
+
+    coord_sys = ('GEOGCRS["GCS_Moon_2000",'
                  'DATUM["D_Moon_2000",'
-                 'SPHEROID["Moon_2000_IAU_IAG", 1737400.0, 0.0]],'
-                 'PRIMEM["Greenwich", 0],'
-                 'UNIT["Decimal_Degree", 0.0174532925199433]]')
+                 'ELLIPSOID["Moon_2000_IAU_IAG",1737400,0,'
+                 'LENGTHUNIT["metre",1]]],'
+                 'PRIMEM["Reference_Meridian",0,'
+                 'ANGLEUNIT["degree",0.0174532925199433]],'
+                 'CS[ellipsoidal,2],'
+                 'AXIS["geodetic latitude (Lat)",north,'
+                 'ORDER[1],'
+                 'ANGLEUNIT["degree",0.0174532925199433]],'
+                 'AXIS["geodetic longitude (Lon)",east,'
+                 'ORDER[2],'
+                 'ANGLEUNIT["degree",0.0174532925199433]],'
+                 'USAGE[SCOPE["unknown"],AREA["World"], BBOX[-90,-180,90,180]],'
+                 'ID["ESRI",104903]]')
+
+    if lonlat_range == 360:
+        coord_sys.replace("BBOX[-90,-180,90,180]],", "BBOX[-90,0,90,360]],")
     return(coord_sys)
 
 def Moon_Equirectangular():
@@ -232,3 +250,5 @@ def select_proj(longitude, latitude):
         proj = Moon_South_Pole_Stereographic()
 
     return proj
+
+

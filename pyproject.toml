@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rastertools"
+version = "0.0.1"
+authors = [
+  { name="Nils C. Prieur", email="prieur.nils@gmail.com" },
+]
+description = "Rastertools is a package that gathers a collection of tools to manipulate and extract metadata from rasters."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yellowchocobo/rastertools"
+"Bug Tracker" = "https://github.com/yellowchocobo/rastertools/issues"
