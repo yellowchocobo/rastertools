@@ -3,8 +3,8 @@ from PIL import Image
 from pyproj import Transformer
 import rasterio as rio
 import numpy as np
-import rastertools.raster as raster
-import rastertools.metadata as raster_metadata
+import rastertools_BOULDERING.raster as raster
+import rastertools_BOULDERING.metadata as raster_metadata
 
 def normalize_uint8(in_raster, out_raster):
     """

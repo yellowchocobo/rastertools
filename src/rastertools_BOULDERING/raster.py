@@ -8,13 +8,14 @@ from itertools import product
 from affine import Affine
 from pathlib import Path
 from rasterio import features
+from rasterio.mask import mask as rio_mask
 from rasterio.plot import reshape_as_raster, reshape_as_image
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from shapely.geometry import box
 from tqdm import tqdm
-import rastertools.metadata as raster_metadata
-import rastertools.convert as raster_convert
-import rastertools.misc as raster_misc
+import rastertools_BOULDERING.metadata as raster_metadata
+import rastertools_BOULDERING.convert as raster_convert
+import rastertools_BOULDERING.misc as raster_misc
 
 def read(in_raster, bands=None, bbox=None, as_image=False):
     """Read a raster. If bbox is specified, then only the specified bbox
@@ -151,7 +152,7 @@ def clip_from_polygon(in_raster, in_polygon, out_raster):
         out_meta = in_meta.copy()
         shapes = [row["geometry"] for i, row in gdf.iterrows()]
         # clipping of raster
-        out_array, out_transform = rio.mask.mask(rio_dataset, shapes, all_touched=False, crop=True)
+        out_array, out_transform = rio_mask(rio_dataset, shapes, all_touched=False, crop=True)
         out_meta.update({"driver": "GTiff",
                          "height": out_array.shape[1],
                          "width": out_array.shape[2],
@@ -299,7 +300,7 @@ def polygonize(in_raster, array, mask_array, out_shapefile):
     :return:
 
     :example:
-    array = read(raster, as_image=True).squeeze()
+    array = read(in_raster, as_image=True).squeeze()
     mask_array = array > 200 # brightest region in the picture
     array = (mask + 0.0).astype('uint8')
     polygonize(in_raster, array, mask_array, out_shapefile="/home/nilscp/tmp/shp/test.shp")
@@ -331,7 +332,7 @@ def mask(in_raster, array, out_raster, is_image=True):
     array = raster.read(in_raster, as_image=True).squeeze()
     mask_array = array < 50
     new_array = (mask + 0.0).astype('uint8')
-    mask(in_raster, np.expand_dims(new_array, 2), out_shapefile="dummy.tif")
+    mask(in_raster, np.expand_dims(new_array, 2), out_raster="dummy.tif")
     """
     in_meta = raster_metadata.get_profile(in_raster)
     out_meta = in_meta.copy()
