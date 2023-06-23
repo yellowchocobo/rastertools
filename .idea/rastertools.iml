@@ -4,6 +4,9 @@
     <content url="file://$MODULE_DIR$" />
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="module" module-name="shptools" />
+    <orderEntry type="module" module-name="MLtools" />
+    <orderEntry type="module" module-name="boulder-analysis" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="NUMPY" />

@@ -2,7 +2,10 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/../MLtools/.idea/MLtools.iml" filepath="$PROJECT_DIR$/../MLtools/.idea/MLtools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../boulder-analysis/.idea/boulder-analysis.iml" filepath="$PROJECT_DIR$/../boulder-analysis/.idea/boulder-analysis.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/rastertools.iml" filepath="$PROJECT_DIR$/.idea/rastertools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../shptools/.idea/shptools.iml" filepath="$PROJECT_DIR$/../shptools/.idea/shptools.iml" />
     </modules>
   </component>
 </project>

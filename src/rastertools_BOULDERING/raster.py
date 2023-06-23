@@ -235,61 +235,6 @@ def resample(in_raster, out_resolution, out_raster):
         out_meta.update({"transform": transform, "width": width, "height": height})
         save(out_raster, resampled_array, out_meta, is_image=False)
 
-
-def tile_windows(in_raster, block_width = 512, block_height = 512, stride=(0,0)):
-    
-    """
-    Tile the rio_dataset raster (rasterio format) to a desired number of blocks
-    having specified width and height.
-    
-    :param rio_dataset: rasterio raster dataset
-    :param width: width of blocks (multiplier of 16 is advised, e.g., 512)
-    :param height: height of blocks (multiplier of 16 is advised, e.g., 512)
-    :returns: tile_window, tile_transform: list of rasterio windows and transforms
-    """
-
-    nwidth = raster_metadata.get_width(in_raster)
-    nheight = raster_metadata.get_height(in_raster)
-    stride_x = stride[0]
-    stride_y = stride[1]
-
-    offsets = product(range(stride_x, nwidth, block_width),
-                      range(stride_y, nheight, block_height))
-
-    tile_window = []
-    tile_transform = []
-    tile_bounds = []
-
-    with rio.open(in_raster) as src:
-        src_transform = src.transform
-
-        # added rounding to avoid varying height, width of tiles
-        # maybe redundant
-        for col_off, row_off in offsets:
-            window =rio.windows.Window(col_off=col_off,
-                                       row_off=row_off,
-                                       width=block_width,
-                                       height=block_height)
-
-            new_col_off = np.int32(np.round(window.col_off))
-            new_row_off = np.int32(np.round(window.row_off))
-            new_width = np.int32(np.round(window.width))
-            new_height = np.int32(np.round(window.height))
-
-            new_win = rio.windows.Window(new_col_off, new_row_off,
-                                         new_width, new_height)
-
-
-            win_transform = src.window_transform(new_win)
-            tile_window.append(new_win)
-            tile_transform.append(win_transform)
-
-            tile_bounds.append(rio.windows.bounds(new_win, src_transform,
-                                              new_win.height,
-                                              new_win.width))
-        
-    return tile_window, tile_transform, tile_bounds
-
 def polygonize(in_raster, array, mask_array, out_shapefile):
     """
     Polygonize raster based on array and mask_array.
@@ -433,6 +378,7 @@ def shift(in_raster, x_shift, y_shift, out_raster):
 
 def graticule(in_raster, block_width, block_height, out_shapefile, stride=(0, 0)):
     """
+    replace generate_graticule_from_raster
     :param in_raster:
     :param block_width:
     :param block_height:
@@ -484,7 +430,57 @@ def graticule(in_raster, block_width, block_height, out_shapefile, stride=(0, 0)
     gdf.to_file(global_graticule_name)
     return (df, gdf)
 
+def tile_windows(in_raster, block_width=512, block_height=512, stride=(0, 0)):
+    """
+    Tile the rio_dataset raster (rasterio format) to a desired number of blocks
+    having specified width and height.
 
+    :param rio_dataset: rasterio raster dataset
+    :param width: width of blocks (multiplier of 16 is advised, e.g., 512)
+    :param height: height of blocks (multiplier of 16 is advised, e.g., 512)
+    :returns: tile_window, tile_transform: list of rasterio windows and transforms
+    """
+
+    nwidth = raster_metadata.get_width(in_raster)
+    nheight = raster_metadata.get_height(in_raster)
+    stride_x = stride[0]
+    stride_y = stride[1]
+
+    offsets = product(range(stride_x, nwidth, block_width),
+                      range(stride_y, nheight, block_height))
+
+    tile_window = []
+    tile_transform = []
+    tile_bounds = []
+
+    with rio.open(in_raster) as src:
+        src_transform = src.transform
+
+        # added rounding to avoid varying height, width of tiles
+        # maybe redundant
+        for col_off, row_off in offsets:
+            window = rio.windows.Window(col_off=col_off,
+                                        row_off=row_off,
+                                        width=block_width,
+                                        height=block_height)
+
+            new_col_off = np.int32(np.round(window.col_off))
+            new_row_off = np.int32(np.round(window.row_off))
+            new_width = np.int32(np.round(window.width))
+            new_height = np.int32(np.round(window.height))
+
+            new_win = rio.windows.Window(new_col_off, new_row_off,
+                                         new_width, new_height)
+
+            win_transform = src.window_transform(new_win)
+            tile_window.append(new_win)
+            tile_transform.append(win_transform)
+
+            tile_bounds.append(rio.windows.bounds(new_win, src_transform,
+                                                  new_win.height,
+                                                  new_win.width))
+
+    return tile_window, tile_transform, tile_bounds
 def tile(in_raster, in_pkl, block_width, block_height):
 
     print("...Tiling original image into small image patches...")
@@ -520,3 +516,59 @@ def tile(in_raster, in_pkl, block_width, block_height):
         # generate tif and pngs (1- and 3-bands)
         save(filename_tif, arr, win_profile, is_image=False)
         raster_convert.tiff_to_png(filename_tif, filename_png)
+
+def tile_from_dataframe(dataframe, dataset_directory, block_width, block_height):
+    print("...Tiling original image into small image patches...")
+
+    dataset_directory = Path(dataset_directory)
+    raster_misc.folder_structure(dataframe, dataset_directory)  # ensure folders are created
+    datasets = dataframe.dataset.unique()
+
+    nimages = 0
+    for d in datasets:
+        image_directory = (dataset_directory / d / "images")
+        n = len(list(image_directory.glob("*.tif")))
+        nimages = nimages + n
+
+    ntiles = dataframe.shape[0]
+
+    if nimages == ntiles:
+        print("Number of tiles == Number of tiles in specified folder(s). No tiling required.")
+    # if for some reasons they don't match, it just need to be re-tiled
+    # we delete the image directory(ies) just to start from a clean folder
+    else:
+        for d in datasets:
+            image_directory = (dataset_directory / d / "images")
+            raster_misc.rm_tree(image_directory)
+
+        # re-creating folder structure
+        raster_misc.folder_structure(dataframe, dataset_directory)
+
+        for index, row in tqdm(dataframe.iterrows(), total=ntiles):
+
+            # this is only useful within the loop if generating tiling on multiple images
+            in_raster = row.raster_ap
+            src_profile = raster_metadata.get_raster_profile(in_raster)
+            win_profile = src_profile
+            win_profile["width"] = block_width
+            win_profile["height"] = block_height
+
+            arr = read(in_raster=in_raster, bbox=rio.windows.Window(*row.rwindows))
+
+            # edge cases (in the East, and South, the extent can be bigger than the actual raster)
+            # read will then return an array with not the dimension
+            h, w = arr.squeeze().shape
+
+            if (h, w) != (block_height, block_width):
+                arr = np.pad(arr.squeeze(),
+                             [(0, block_height - h), (0, block_width - w)],
+                             mode='constant', constant_values=0)
+                arr = np.expand_dims(arr, axis=0)
+
+            filename_tif = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", ".tif"))
+            filename_png1 = (dataset_directory / row.dataset / "images" / row.file_name)
+            win_profile["transform"] = Affine(*row["transform"])
+
+            # generate tif and pngs (1- and 3-bands)
+            save(filename_tif, arr, win_profile, is_image=False)
+            raster_convert.tiff_to_png(filename_tif, filename_png1)
