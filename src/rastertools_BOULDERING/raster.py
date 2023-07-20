@@ -548,7 +548,7 @@ def tile_from_dataframe(dataframe, dataset_directory, block_width, block_height)
 
             # this is only useful within the loop if generating tiling on multiple images
             in_raster = row.raster_ap
-            src_profile = raster_metadata.get_raster_profile(in_raster)
+            src_profile = raster_metadata.get_profile(in_raster)
             win_profile = src_profile
             win_profile["width"] = block_width
             win_profile["height"] = block_height
